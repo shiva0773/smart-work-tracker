@@ -33,14 +33,14 @@ def log_system_shutdown():
             note = "Full Day" if hours_worked >= WORK_HOURS_REQUIRED else "Early Logout"
 
             # Write plain log
-            write_log(PLAIN_LOG_FILE, f"[LOGOUT] {end_time} - Worked: {hours_worked} hrs - {note}")
+            write_plain_log(PLAIN_LOG_FILE, f"[LOGOUT] {end_time} - Worked: {hours_worked} hrs - {note}")
 
             # Write structured log
             write_log(STRUCTURED_LOG_FILE, "logout", f"{note} - Worked: {hours_worked} hrs", start_time, end_time)
 
     except Exception as e:
         # Fallback: log error to both logs
-        write_log(PLAIN_LOG_FILE, f"[LOGOUT] {end_time} - Error: {e}")
+        write_plain_log(PLAIN_LOG_FILE, f"[LOGOUT] {end_time} - Error: {e}")
         write_log(STRUCTURED_LOG_FILE, "logout", f"Error: {e}", end_time, end_time)
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 import sys
 import getpass
+import requests
 from datetime import datetime, timedelta
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
@@ -69,6 +70,11 @@ class WorkTrackerBar(QWidget):
 
         row.addStretch()
 
+        self.weather_label = QLabel("🌤️ Loading...")
+        self.weather_label.setFont(QFont("Segoe UI", 13))
+        self.weather_label.setStyleSheet("color: #ffd700;")
+        row.addWidget(self.weather_label)
+
         self.clock_label = QLabel()
         self.clock_label.setFont(QFont("Segoe UI", 13, QFont.Bold))
         self.clock_label.setStyleSheet("color: #a6e22e;")
@@ -85,9 +91,29 @@ class WorkTrackerBar(QWidget):
         self.timer.start(1000)
         self.update_info()
 
+    def get_weather(self):
+        """Get weather for Hyderabad"""
+        try:
+            api_key = "bd5e378503939ddaee76f12ad7a97608"
+            city = "Hyderabad"
+            url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
+            resp = requests.get(url, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                temp = data['main']['temp']
+                return f"🌤️ {temp}°C"
+        except Exception:
+            pass
+        return "🌤️ --°C"
+
     def update_info(self):
         now = datetime.now()
         remaining = self.logout_time - now
+
+        # Update weather every 5 minutes
+        if not hasattr(self, 'last_weather_update') or (now - self.last_weather_update).total_seconds() > 300:
+            self.weather_label.setText(self.get_weather())
+            self.last_weather_update = now
 
         self.clock_label.setText(f"🕒 {now.strftime('%I:%M:%S %p')}")
         if remaining.total_seconds() > 0:

@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 
 # CONFIGURATION
 LOG_FILE = os.path.join(os.path.dirname(__file__), "logs", "structured_log.json")
@@ -56,11 +58,31 @@ def generate_weekly_report():
     return "\n".join(report)
 
 def send_email(report):
-    msg = MIMEMultipart()
+    msg = MIMEMultipart('alternative')
     msg["From"] = GMAIL_USER
     msg["To"] = RECIPIENT
     msg["Subject"] = "Weekly Productivity Report"
-    msg.attach(MIMEText(report, "plain"))
+
+    # Prepare HTML body with embedded chart
+    chart_path = os.path.join(os.path.dirname(LOG_FILE), 'weekly_productivity_chart.png')
+    img_html = ""
+    if os.path.exists(chart_path):
+        import base64
+        with open(chart_path, "rb") as img_file:
+            img_data = base64.b64encode(img_file.read()).decode('utf-8')
+        img_html = f'<br><img src="data:image/png;base64,{img_data}" alt="Weekly Productivity Chart" style="max-width:600px; border:2px solid #4fc3f7; border-radius:8px;">'
+
+    html = f"""
+    <html>
+    <body style='font-family: Arial, sans-serif; background: #23272e; color: #fff;'>
+    <h2>WEEKLY PRODUCTIVITY REPORT</h2>
+    <pre style='font-size: 15px; color: #fff; background: #23272e; border-radius: 8px;'>{report}</pre>
+    {img_html}
+    </body>
+    </html>
+    """
+    msg.attach(MIMEText(html, "html"))
+
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(GMAIL_USER, GMAIL_PASS)

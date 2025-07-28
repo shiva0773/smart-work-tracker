@@ -4,9 +4,9 @@ import os
 import time
 
 def main():
-    # Step 1: Log system login time
+    # Step 1: Log system login time (11 AM)
     log_system_start()
-    print("✅ System login time logged.")
+    print("✅ System login time logged at 11:00 AM.")
 
     # Step 2: Start tracking logic here (keep this script running)
     print("📊 Running AI Work Tracker... Press Ctrl+C to simulate shutdown.\n")

@@ -7,6 +7,29 @@ LOG_FILE = os.path.join("logs", "structured_log.json")
 WORK_DURATION_HOURS = 9
 
 def get_last_login():
+    # First try to get login time from login_time.json (our configured 11 AM time)
+    login_time_file = os.path.join("logs", "login_time.json")
+    if os.path.exists(login_time_file):
+        try:
+            with open(login_time_file, "r") as f:
+                data = json.load(f)
+                login_str = data.get("login_time")
+                if login_str:
+                    login_time = datetime.strptime(login_str, "%Y-%m-%d %H:%M:%S")
+                    expected_logout = login_time + timedelta(hours=WORK_DURATION_HOURS)
+                    
+                    # Determine status based on current time vs 11 AM
+                    now = datetime.now()
+                    if now.time() > login_time.time():
+                        status = "Late Login"
+                    else:
+                        status = "On Time"
+                    
+                    return login_time, expected_logout, status
+        except Exception as e:
+            print(f"Error reading login_time.json: {e}")
+    
+    # Fallback to structured log if login_time.json doesn't exist
     if not os.path.exists(LOG_FILE):
         return None, None, None
 
