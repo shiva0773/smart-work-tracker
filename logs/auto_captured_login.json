@@ -2,6 +2,6 @@
   "date": "2025-07-28",
   "login_time": "2025-07-28 11:49:31",
   "logout_time": "2025-07-28 20:49:31",
-  "captured_at": "2025-07-28 11:49:31",
-  "method": "auto_capture"
+  "saved_at": "2025-07-28 12:08:59",
+  "method": "auto_capture_with_manual_fallback"
 }
