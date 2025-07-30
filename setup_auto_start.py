@@ -8,6 +8,7 @@ import os
 import sys
 import winreg
 import subprocess
+import importlib
 from pathlib import Path
 
 def setup_auto_start():
@@ -17,21 +18,26 @@ def setup_auto_start():
     
     # Get the current directory and script path
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    tracker_script = os.path.join(current_dir, "auto_capture_login_tracker.py")
+    main_script = os.path.join(current_dir, "main.py")
     
     # Check if the tracker script exists
-    if not os.path.exists(tracker_script):
-        print("❌ Error: auto_capture_login_tracker.py not found!")
+    if not os.path.exists(main_script):
+        print(f"❌ Error: {os.path.basename(main_script)} not found!")
         return False
     
     # Get Python executable path
     python_exe = sys.executable
-    if not python_exe:
-        print("❌ Error: Could not find Python executable!")
-        return False
+    pythonw_exe = python_exe.replace("python.exe", "pythonw.exe")
+
+    # Prefer pythonw.exe for a silent, no-console startup, but fall back if it doesn't exist
+    if not os.path.exists(pythonw_exe):
+        print("⚠️ 'pythonw.exe' not found, falling back to 'python.exe'. A console window may flash on startup.")
+        startup_executable = python_exe
+    else:
+        startup_executable = pythonw_exe
     
     # Create the startup command
-    startup_cmd = f'"{python_exe}" "{tracker_script}"'
+    startup_cmd = f'"{startup_executable}" "{main_script}"'
     
     try:
         # Open the Windows Registry key for current user startup
@@ -43,7 +49,7 @@ def setup_auto_start():
         winreg.CloseKey(key)
         
         print("✅ Auto-start setup successful!")
-        print(f"📁 Tracker script: {tracker_script}")
+        print(f"📁 Main script: {main_script}")
         print(f"🐍 Python executable: {python_exe}")
         print(f"🔧 Startup command: {startup_cmd}")
         print("\n🎯 What happens now:")
@@ -109,6 +115,33 @@ def check_auto_start_status():
         print(f"❌ Error checking auto-start status: {e}")
         return False
 
+def check_dependencies():
+    """Checks if all required packages are installed."""
+    print("\n🩺 Checking for required packages...")
+    # Names used for importing can be different from pip package names
+    required_imports = {
+        "requests": "requests",
+        "psutil": "psutil",
+        "pystray": "pystray",
+        "Pillow": "PIL.Image",
+        "pywin32": "win32gui"
+    }
+    missing = []
+    for pkg, mod in required_imports.items():
+        try:
+            importlib.import_module(mod)
+            print(f"  ✅ {pkg} is installed.")
+        except ImportError:
+            missing.append(pkg)
+            print(f"  ❌ {pkg} is MISSING.")
+    
+    if missing:
+        print("\n⚠️ Please install missing packages by running:\n   pip install -r requirements.txt")
+        return False
+    
+    print("👍 All dependencies are present.")
+    return True
+
 def create_batch_file():
     """Create a batch file for easier management"""
     print("📝 Creating batch file for easy management...")
@@ -130,7 +163,7 @@ set /p choice="Enter your choice (1-5): "
 
 if "%choice%"=="1" (
     echo Starting tracker...
-    python "{os.path.join(current_dir, "auto_capture_login_tracker.py")}"
+    python "{os.path.join(current_dir, "main.py")}"
 ) else if "%choice%"=="2" (
     echo Setting up auto-start...
     python "{os.path.join(current_dir, "setup_auto_start.py")}" --setup
@@ -161,6 +194,10 @@ pause
 
 def main():
     """Main function"""
+    if not check_dependencies():
+        print("\nPlease resolve dependency issues before proceeding.")
+        return
+
     if len(sys.argv) > 1:
         command = sys.argv[1]
         

@@ -3,48 +3,27 @@ import json
 from datetime import datetime, timedelta
 import os
 
-LOG_FILE = os.path.join("logs", "structured_log.json")
+import requests
+import config
+
+LOGIN_LOG_FILE = os.path.join("logs", "auto_captured_login.json")
 WORK_DURATION_HOURS = 9
 
 def get_last_login():
-    # First try to get login time from login_time.json (our configured 11 AM time)
-    login_time_file = os.path.join("logs", "login_time.json")
-    if os.path.exists(login_time_file):
+    """Gets the login time from the single source of truth."""
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if os.path.exists(LOGIN_LOG_FILE):
         try:
-            with open(login_time_file, "r") as f:
+            with open(LOGIN_LOG_FILE, "r") as f:
                 data = json.load(f)
-                login_str = data.get("login_time")
-                if login_str:
-                    login_time = datetime.strptime(login_str, "%Y-%m-%d %H:%M:%S")
-                    expected_logout = login_time + timedelta(hours=WORK_DURATION_HOURS)
-                    
-                    # Determine status based on current time vs 11 AM
-                    now = datetime.now()
-                    if now.time() > login_time.time():
-                        status = "Late Login"
-                    else:
-                        status = "On Time"
-                    
-                    return login_time, expected_logout, status
+                if data.get("date") == today_str:
+                    login_str = data.get("login_time")
+                    if login_str:
+                        login_time = datetime.strptime(login_str, "%Y-%m-%d %H:%M:%S")
+                        expected_logout = login_time + timedelta(hours=WORK_DURATION_HOURS)
+                        return login_time, expected_logout, data.get("method", "unknown")
         except Exception as e:
-            print(f"Error reading login_time.json: {e}")
-    
-    # Fallback to structured log if login_time.json doesn't exist
-    if not os.path.exists(LOG_FILE):
-        return None, None, None
-
-    with open(LOG_FILE, "r") as f:
-        try:
-            logs = json.load(f)
-            login_entries = [log for log in logs if log["event"] == "login"]
-            if login_entries:
-                last_login = login_entries[-1]
-                login_str = last_login["start_time"]
-                login_time = datetime.strptime(login_str, "%Y-%m-%d %H:%M:%S")
-                expected_logout = login_time + timedelta(hours=WORK_DURATION_HOURS)
-                return login_time, expected_logout, last_login["title"]
-        except json.JSONDecodeError:
-            return None, None, None
+            print(f"Error reading login file: {e}")
     return None, None, None
 
 def show_login_popup():
@@ -72,20 +51,26 @@ def show_login_popup():
     left_frame.place(relx=0.5, rely=0.5, anchor="center")
     left_frame.pack_propagate(False)
 
-    def get_weather(city="Bangalore", api_key="YOUR_API_KEY"):
-        import requests
+    def get_weather():
+        """Get weather for the configured city, using config.py."""
+        if not config.OPENWEATHER_API_KEY or "YOUR_API_KEY" in config.OPENWEATHER_API_KEY:
+            print("⚠️ Weather API key not set in config.py. Skipping weather fetch.")
+            return None
+        
+        url = f"https://api.openweathermap.org/data/2.5/weather?q={config.WEATHER_CITY}&appid={config.OPENWEATHER_API_KEY}&units=metric"
+        
         try:
-            url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
             resp = requests.get(url, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                temp = data['main']['temp']
-                return temp
-        except Exception:
-            pass
+            resp.raise_for_status()  # Raises an HTTPError for bad responses
+            data = resp.json()
+            return data.get('main', {}).get('temp')
+        except requests.exceptions.RequestException as e:
+            print(f"⚠️ Error fetching weather: {e}")
         return None
+
     # Idle/Lock alert label
     alert_label = tk.Label(left_frame, text="", font=("Arial", 11, "bold"), fg="#ff6b6b", bg="#23272e")
+    LOG_FILE = os.path.join("logs", "structured_log.json")
     alert_label.pack(pady=(0,5))
 
     def get_today_idle_lock():
@@ -133,9 +118,7 @@ def show_login_popup():
     greeting = random.choice(motivational_quotes)
 
     # Get weather temperature for Hyderabad
-    api_key = "bd5e378503939ddaee76f12ad7a97608"
-    city = "Hyderabad"
-    temp = get_weather(city, api_key)
+    temp = get_weather()
     weather_str = f" ({temp}°C)" if temp is not None else ""
 
     # Stack all elements vertically, centered, with minimal padding
@@ -203,4 +186,9 @@ def show_login_popup():
     root.mainloop()
 
 if __name__ == "__main__":
-    show_login_popup()
+    import sys
+    print("="*60, file=sys.stderr)
+    print("❌ ERROR: This script (desktop_display.py) is not the main application.", file=sys.stderr)
+    print("   Please run 'main.py' to launch the full AI Work Tracker.", file=sys.stderr)
+    print("="*60, file=sys.stderr)
+    sys.exit(1)

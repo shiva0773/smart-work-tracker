@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import QApplication, QLabel, QHBoxLayout, QVBoxLayout, QWid
 # Use system_login_fetcher to get correct login time
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import config
 from tracker.system_login_fetcher import get_latest_login_time
 
 class WorkTrackerBar(QWidget):
@@ -92,18 +93,22 @@ class WorkTrackerBar(QWidget):
         self.update_info()
 
     def get_weather(self):
-        """Get weather for Hyderabad"""
+        """Get weather for the configured city."""
+        if not config.OPENWEATHER_API_KEY or "YOUR_API_KEY" in config.OPENWEATHER_API_KEY:
+            print("⚠️ Weather API key not set in config.py. Skipping weather fetch.")
+            return "🌤️ --°C"
+        
+        url = f"https://api.openweathermap.org/data/2.5/weather?q={config.WEATHER_CITY}&appid={config.OPENWEATHER_API_KEY}&units=metric"
+        
         try:
-            api_key = "bd5e378503939ddaee76f12ad7a97608"
-            city = "Hyderabad"
-            url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
             resp = requests.get(url, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                temp = data['main']['temp']
+            resp.raise_for_status()
+            data = resp.json()
+            temp = data.get('main', {}).get('temp')
+            if temp is not None:
                 return f"🌤️ {temp}°C"
-        except Exception:
-            pass
+        except requests.exceptions.RequestException as e:
+            print(f"⚠️ Error fetching weather: {e}")
         return "🌤️ --°C"
 
     def update_info(self):
@@ -123,7 +128,13 @@ class WorkTrackerBar(QWidget):
 
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    tracker = WorkTrackerBar()
-    tracker.show()
-    sys.exit(app.exec_())
+    import sys
+    print("="*60, file=sys.stderr)
+    print("❌ ERROR: This script (floating_bar.py) is not the main application.", file=sys.stderr)
+    print("   Please run 'main.py' to launch the full AI Work Tracker.", file=sys.stderr)
+    print("="*60, file=sys.stderr)
+    sys.exit(1)
+    # app = QApplication(sys.argv)
+    # tracker = WorkTrackerBar()
+    # tracker.show()
+    # sys.exit(app.exec_())

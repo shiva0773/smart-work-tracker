@@ -10,13 +10,21 @@ import json
 import os
 import requests
 import psutil
+import config
 from datetime import datetime, timedelta
 import getpass
+import threading
+import pystray
+from PIL import Image, ImageDraw
+
+from tracker.log_writer import write_log
 
 class AIWorkTracker:
+    APP_VERSION = "v1.5"  # A version number to confirm updates
+
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("🤖 AI Work Tracker")
+        self.root.title(f"🤖 AI Work Tracker {self.APP_VERSION}")
         self.root.geometry("450x400")
         self.root.resizable(True, True)
         self.root.attributes("-topmost", True)
@@ -32,7 +40,11 @@ class AIWorkTracker:
         self.save_login_time()
         
         self.setup_ui()
+        self.setup_tray_icon()
         self.start_timer()
+
+        # Override the close button to hide the window instead of closing
+        self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
         
     def get_todays_login_time(self):
         """Get today's login time - auto-capture or manual setting"""
@@ -231,18 +243,23 @@ class AIWorkTracker:
         print(f"✅ Login time saved: {self.login_time}")
     
     def get_weather(self):
-        """Get weather for Hyderabad"""
+        """Get weather for the configured city."""
+        if not config.OPENWEATHER_API_KEY or "YOUR_API_KEY" in config.OPENWEATHER_API_KEY:
+            print("⚠️ Weather API key not set in config.py. Skipping weather fetch.")
+            return "--°C"
+        
+        url = f"https://api.openweathermap.org/data/2.5/weather?q={config.WEATHER_CITY}&appid={config.OPENWEATHER_API_KEY}&units=metric"
+        
         try:
-            api_key = "bd5e378503939ddaee76f12ad7a97608"
-            city = "Hyderabad"
-            url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
             resp = requests.get(url, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                temp = data['main']['temp']
+            resp.raise_for_status()  # Raises an HTTPError for bad responses (4xx or 5xx)
+            data = resp.json()
+            temp = data.get('main', {}).get('temp')
+            if temp is not None:
                 return f"{temp}°C"
-        except Exception:
-            pass
+        except requests.exceptions.RequestException as e:
+            print(f"⚠️ Error fetching weather: {e}")
+        
         return "--°C"
     
     def setup_ui(self):
@@ -317,6 +334,12 @@ class AIWorkTracker:
                                     font=("Arial", 12), 
                                     fg="#ffd700", bg="#23272e")
         self.status_label.pack()
+
+        # Idle/Lock status
+        self.activity_status_label = tk.Label(main_frame, text="",
+                                             font=("Arial", 11, "italic"),
+                                             fg="#ff6b6b", bg="#23272e")
+        self.activity_status_label.pack(pady=(5, 0))
         
         # Buttons
         button_frame = tk.Frame(main_frame, bg="#23272e")
@@ -342,6 +365,13 @@ class AIWorkTracker:
                              fg="#23272e", bg="#ff9800", 
                              activebackground="#ffb74d", activeforeground="#23272e")
         reset_btn.pack(side=tk.LEFT, padx=5)
+        
+        end_day_btn = tk.Button(button_frame, text="End Day",
+                                     command=self.handle_end_day,
+                                     font=("Arial", 12),
+                                     fg="#fff", bg="#d32f2f",
+                                     activebackground="#e57373", activeforeground="#fff")
+        end_day_btn.pack(side=tk.LEFT, padx=5)
     
     def change_time(self):
         """Change the start time"""
@@ -363,6 +393,144 @@ class AIWorkTracker:
             os.remove(login_file)
         
         messagebox.showinfo("Reset", "Login time reset. Tomorrow it will auto-capture or ask for manual input.")
+
+    def handle_end_day(self):
+        """Handles the process for ending the workday, either early or on time."""
+        remaining_seconds = (self.logout_time - datetime.now()).total_seconds()
+
+        if remaining_seconds > 0:
+            # Workday is not complete, so this is an early logout.
+            self.show_early_logout_dialog()
+        else:
+            # Workday is complete.
+            if messagebox.askyesno("Confirm End Day", "You've completed your 9 hours. Great job!\n\nDo you want to close the tracker for the day?"):
+                now = datetime.now()
+                write_log(
+                    "logs/structured_log.json",
+                    "normal_logout",
+                    "Workday Complete",
+                    self.login_time.strftime("%Y-%m-%d %H:%M:%S"),
+                    now.strftime("%Y-%m-%d %H:%M:%S")
+                )
+                self.update_logout_info(now, "Workday Complete")
+                self.root.destroy()
+
+    def show_early_logout_dialog(self):
+        """Shows a dialog to get the reason for an early logout."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Early Logout Reason")
+        dialog.geometry("350x200")
+        dialog.configure(bg="#23272e")
+        dialog.attributes("-topmost", True)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        tk.Label(dialog, text="Why are you logging out early?", font=("Arial", 12, "bold"), fg="#fff", bg="#23272e").pack(pady=10)
+
+        reasons = ["Feeling unwell", "Personal commitment", "Finished work early", "Other"]
+        reason_var = tk.StringVar(value=reasons[0])
+
+        reason_combo = ttk.Combobox(dialog, textvariable=reason_var, values=reasons, state="readonly", font=("Arial", 12))
+        reason_combo.pack(pady=5, padx=20, fill="x")
+
+        def confirm_logout():
+            reason = reason_var.get()
+            now = datetime.now()
+
+            # 1. Log the event to the structured log file
+            write_log(
+                "logs/structured_log.json",
+                "early_logout",
+                reason,  # The reason becomes the title of the log entry
+                self.login_time.strftime("%Y-%m-%d %H:%M:%S"),
+                now.strftime("%Y-%m-%d %H:%M:%S")
+            )
+
+            # 2. Update the main login file with final details
+            self.update_logout_info(now, reason)
+
+            # 3. Show confirmation and close the app
+            messagebox.showinfo("Logout Successful", f"You have been logged out for the day.\nReason: {reason}")
+            self.root.destroy()
+
+        button_frame = tk.Frame(dialog, bg="#23272e")
+        button_frame.pack(pady=20)
+
+        tk.Button(button_frame, text="Confirm & Logout", command=confirm_logout, font=("Arial", 10), fg="#fff", bg="#d32f2f").pack(side=tk.LEFT, padx=10)
+        tk.Button(button_frame, text="Cancel", command=dialog.destroy, font=("Arial", 10), fg="#23272e", bg="#ccc").pack(side=tk.LEFT, padx=10)
+
+        self.root.wait_window(dialog)
+
+    def update_logout_info(self, logout_time, reason):
+        """Updates the main login file with the final logout time and reason."""
+        login_file = "logs/auto_captured_login.json"
+        
+        if os.path.exists(login_file):
+            with open(login_file, 'r') as f:
+                login_data = json.load(f)
+        else:
+            login_data = {"date": datetime.now().strftime("%Y-%m-%d")}
+
+        login_data['actual_logout_time'] = logout_time.strftime("%Y-%m-%d %H:%M:%S")
+        login_data['logout_reason'] = reason
+        with open(login_file, "w") as f:
+            json.dump(login_data, f, indent=2)
+        print(f"✅ Final logout info saved at {logout_time} for reason: {reason}")
+
+    def setup_tray_icon(self):
+        """Sets up and runs the system tray icon in a separate thread."""
+        # Create a simple icon image
+        width = 64
+        height = 64
+        color1 = "#4fc3f7"  # A light blue
+        color2 = "#23272e"  # Dark background
+        image = Image.new('RGB', (width, height), color2)
+        dc = ImageDraw.Draw(image)
+        dc.rectangle([(width // 4, height // 4), (width * 3 // 4, height * 3 // 4)], fill=color1)
+        
+        menu = (
+            pystray.MenuItem('Show Tracker', self.show_window, default=True),
+            pystray.MenuItem('Quit', self.quit_app)
+        )
+        
+        self.tray_icon = pystray.Icon("AIWorkTracker", image, "AI Work Tracker", menu)
+        
+        # Run the icon in a separate thread so it doesn't block the UI
+        threading.Thread(target=self.tray_icon.run, daemon=True).start()
+
+    def show_window(self):
+        """Shows the main window."""
+        self.root.deiconify()
+
+    def hide_window(self):
+        """Hides the main window."""
+        self.root.withdraw()
+
+    def quit_app(self):
+        """Stops the tray icon and closes the application."""
+        self.tray_icon.stop()
+        self.root.destroy()
+
+    def get_today_activity_stats(self):
+        """Calculates total idle and lock time for today from the structured log."""
+        log_file = "logs/structured_log.json"
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        idle_seconds = 0
+        lock_seconds = 0
+
+        if os.path.exists(log_file):
+            try:
+                with open(log_file, 'r') as f:
+                    logs = json.load(f)
+                    for entry in logs:
+                        if entry.get('start_time', '').startswith(today_str):
+                            if entry.get('event') == 'idle':
+                                idle_seconds += entry.get('duration_seconds', 0)
+                            elif entry.get('event') == 'lock':
+                                lock_seconds += entry.get('duration_seconds', 0)
+            except (json.JSONDecodeError, IOError):
+                pass  # Ignore errors if the file is being written to
+        return idle_seconds, lock_seconds
     
     def start_timer(self):
         """Start the update timer"""
@@ -394,6 +562,16 @@ class AIWorkTracker:
             self.status_label.config(text=f"Status: Working ({hours_worked:.1f} hours completed)")
         else:
             self.status_label.config(text="Status: Workday Complete!")
+
+        # Update idle/lock status
+        idle_seconds, lock_seconds = self.get_today_activity_stats()
+        activity_text = []
+        if idle_seconds > 60:
+            activity_text.append(f"Idle: {idle_seconds // 60} min")
+        if lock_seconds > 60:
+            activity_text.append(f"Locked: {lock_seconds // 60} min")
+        
+        self.activity_status_label.config(text=" | ".join(activity_text))
     
     def run(self):
         """Run the tracker"""

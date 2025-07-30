@@ -35,7 +35,7 @@ System Boot → Auto-Start Detection → Time Capture → 9-Hour Workday
 
 ### **1. Basic Usage**
 ```bash
-python auto_capture_login_tracker.py
+python main.py
 ```
 
 ### **2. Auto-Start Setup**

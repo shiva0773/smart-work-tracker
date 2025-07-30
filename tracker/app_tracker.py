@@ -1,25 +1,40 @@
 import time
-import win32gui
-import datetime
+import os
+import sys
+from datetime import datetime
+
+# Ensure the parent directory is in the path to find the log_writer module
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from tracker.log_writer import write_log
 
+# pywin32 is required for this module
+try:
+    import win32gui
+except ImportError:
+    print("❌ 'pywin32' is not installed. Please run 'pip install pywin32' and add it to requirements.txt")
+    sys.exit(1)
+
+LOG_FILE = os.path.join("logs", "structured_log.json")
+
 def get_active_window():
-    window = win32gui.GetForegroundWindow()
-    return win32gui.GetWindowText(window).strip()
+    try:
+        window = win32gui.GetForegroundWindow()
+        return win32gui.GetWindowText(window).strip()
+    except Exception:
+        return ""
 
 def track_active_window(interval=2):
-    previous_window = None
-    start_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    previous_window = get_active_window()
+    start_time = datetime.now()
 
     while True:
+        time.sleep(interval)
         current_window = get_active_window()
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         if current_window and current_window != previous_window:
             if previous_window:
-                write_log("active_app", previous_window, start_time, now)
-            print(f"{now} - Active Window: {current_window}")
+                end_time = datetime.now()
+                write_log(LOG_FILE, "active_app", previous_window, start_time.strftime("%Y-%m-%d %H:%M:%S"), end_time.strftime("%Y-%m-%d %H:%M:%S"))
+            print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Active Window: {current_window}")
             previous_window = current_window
-            start_time = now
-
-        time.sleep(interval)
+            start_time = datetime.now()
