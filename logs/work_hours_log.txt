@@ -1,2 +1,0 @@
-[LOGIN] 2025-07-25 14:33:11 - Late Login
-[LOGOUT] 2025-07-25 14:33:19 - Worked: 0.0 hrs - Early Logout
