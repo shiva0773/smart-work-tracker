@@ -1,0 +1,23 @@
+2025-07-25 12:49:09 - Active Window: main.py - ai_work_tracker - Visual Studio Code
+2025-07-25 12:49:34 - Active Window: app_tracker.py - ai_work_tracker - Visual Studio Code
+2025-07-25 12:49:39 - Active Window: usage_log.txt - ai_work_tracker - Visual Studio Code
+2025-07-25 12:49:54 - Active Window: AI work tracking tool
+2025-07-25 12:50:04 - Active Window: usage_log.txt - ai_work_tracker - Visual Studio Code
+2025-07-25 12:50:09 - Active Window: AI work tracking tool
+2025-07-25 12:51:19 - Active Window: main.py - ai_work_tracker - Visual Studio Code
+2025-07-25 12:51:29 - Active Window: idle_tracker.py - ai_work_tracker - Visual Studio Code
+2025-07-25 12:51:34 - Active Window: usage_log.txt - ai_work_tracker - Visual Studio Code
+2025-07-25 12:51:44 - Active Window: Get Business course help from our community - gundrashivakumar@gmail.com - Gmail and 7 more pages - Work - Microsoft​ Edge
+2025-07-25 12:51:49 - Active Window: *Lighthouse - Notepad
+2025-07-25 12:51:54 - Active Window: PythonTraining – p1.py
+2025-07-25 12:51:59 - Active Window: usage_log.txt - ai_work_tracker - Visual Studio Code
+2025-07-25 12:52:19 - Active Window: AI work tracking tool
+2025-07-25 12:52:29 - Active Window: usage_log.txt - ai_work_tracker - Visual Studio Code
+2025-07-25 12:52:35 - Active Window: AI work tracking tool
+2025-07-25 12:52:40 - Active Window: usage_log.txt - ai_work_tracker - Visual Studio Code
+2025-07-25 12:52:50 - Active Window: AI work tracking tool
+2025-07-25 12:53:58 - Active Window: main.py - ai_work_tracker - Visual Studio Code
+2025-07-25 12:54:03 - Active Window: usage_log.txt - ai_work_tracker - Visual Studio Code
+2025-07-25 12:54:08 - Active Window: Windows Default Lock Screen
+2025-07-25 12:55:04 - Active Window: UnlockingWindow
+2025-07-25 12:55:09 - Active Window: usage_log.txt - ai_work_tracker - Visual Studio Code

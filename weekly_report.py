@@ -7,12 +7,11 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 
+import config
+
 # CONFIGURATION
 LOG_FILE = os.path.join(os.path.dirname(__file__), "logs", "structured_log.json")
 WEEKLY_REPORT_FILE = os.path.join(os.path.dirname(__file__), "weekly_report.txt")
-GMAIL_USER = "gundrashivakumar@@gmail.com"  # <-- CHANGE THIS
-GMAIL_PASS = "sfolmifzmhgqpgli"      # <-- CHANGE THIS (use Gmail App Password)
-RECIPIENT = "gundrashivakumar@gmail.com"    # <-- CHANGE THIS
 
 # Get start and end of current week (Monday to Friday)
 today = datetime.now()
@@ -59,8 +58,8 @@ def generate_weekly_report():
 
 def send_email(report):
     msg = MIMEMultipart('alternative')
-    msg["From"] = GMAIL_USER
-    msg["To"] = RECIPIENT
+    msg["From"] = config.GMAIL_USER
+    msg["To"] = config.RECIPIENT
     msg["Subject"] = "Weekly Productivity Report"
 
     # Prepare HTML body with embedded chart
@@ -85,8 +84,8 @@ def send_email(report):
 
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(GMAIL_USER, GMAIL_PASS)
-            server.sendmail(GMAIL_USER, RECIPIENT, msg.as_string())
+            server.login(config.GMAIL_USER, config.GMAIL_PASS)
+            server.sendmail(config.GMAIL_USER, config.RECIPIENT, msg.as_string())
         print("Report sent successfully!")
     except Exception as e:
         print(f"Failed to send email: {e}")

@@ -11,6 +11,9 @@ import subprocess
 import importlib
 from pathlib import Path
 
+APP_NAME_LOGIN = "AIWorkTracker"
+APP_NAME_UNLOCK = "AIWorkTrackerShowOnUnlock"
+
 def setup_auto_start():
     """Set up auto-start for the AI Work Tracker"""
     print("🚀 Setting up Auto-Start for AI Work Tracker...")
@@ -45,7 +48,7 @@ def setup_auto_start():
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_WRITE)
         
         # Set the registry value
-        winreg.SetValueEx(key, "AIWorkTracker", 0, winreg.REG_SZ, startup_cmd)
+        winreg.SetValueEx(key, APP_NAME_LOGIN, 0, winreg.REG_SZ, startup_cmd)
         winreg.CloseKey(key)
         
         print("✅ Auto-start setup successful!")
@@ -75,7 +78,7 @@ def remove_auto_start():
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_WRITE)
         
         # Remove the registry value
-        winreg.DeleteValue(key, "AIWorkTracker")
+        winreg.DeleteValue(key, APP_NAME_LOGIN)
         winreg.CloseKey(key)
         
         print("✅ Auto-start removed successfully!")
@@ -99,7 +102,7 @@ def check_auto_start_status():
         
         # Try to read the value
         try:
-            value, _ = winreg.QueryValueEx(key, "AIWorkTracker")
+            value, _ = winreg.QueryValueEx(key, APP_NAME_LOGIN)
             winreg.CloseKey(key)
             
             print("✅ Auto-start is currently ENABLED")
@@ -113,6 +116,76 @@ def check_auto_start_status():
             
     except Exception as e:
         print(f"❌ Error checking auto-start status: {e}")
+        return False
+
+def setup_unlock_trigger():
+    """Sets up a task to show the tracker window on workstation unlock."""
+    print("\n🔧 Setting up 'Show on Unlock' trigger via Task Scheduler...")
+    
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    main_script = os.path.join(current_dir, "main.py")
+    
+    pythonw_exe = sys.executable.replace("python.exe", "pythonw.exe")
+    if not os.path.exists(pythonw_exe):
+        pythonw_exe = sys.executable
+
+    # The command includes a flag to tell the app it's an unlock trigger
+    command = f'"{pythonw_exe}" "{main_script}" --show-on-unlock'
+    
+    # schtasks command to create the task
+    create_cmd = [
+        'schtasks', '/Create', '/TN', APP_NAME_UNLOCK, '/TR', command, '/SC', 'ONUNLOCK', '/F'
+    ]
+    
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        
+        result = subprocess.run(create_cmd, check=True, capture_output=True, text=True, startupinfo=startupinfo)
+        print(f"✅ Success: Task '{APP_NAME_UNLOCK}' created.")
+        print("   The tracker window will now appear each time you unlock your computer.")
+        return True
+    except FileNotFoundError:
+        print("❌ Error: 'schtasks.exe' not found. This feature is only available on Windows.")
+        return False
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Error creating scheduled task: {e.stderr}")
+        return False
+
+def remove_unlock_trigger():
+    """Removes the 'Show on Unlock' scheduled task."""
+    print("\n🗑️ Removing 'Show on Unlock' trigger...")
+    
+    delete_cmd = ['schtasks', '/Delete', '/TN', APP_NAME_UNLOCK, '/F']
+    
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        
+        result = subprocess.run(delete_cmd, check=True, capture_output=True, text=True, startupinfo=startupinfo)
+        print(f"✅ Success: Task '{APP_NAME_UNLOCK}' removed.")
+        return True
+    except FileNotFoundError:
+        print("❌ Error: 'schtasks.exe' not found.")
+        return False
+    except subprocess.CalledProcessError as e:
+        # It's common for this to fail if the task doesn't exist, which is fine.
+        if "ERROR: The specified task name" in e.stderr:
+            print(f"ℹ️  Info: Task '{APP_NAME_UNLOCK}' was not found (already removed).")
+            return True
+        else:
+            print(f"❌ Error removing scheduled task: {e.stderr}")
+            return False
+
+def check_unlock_trigger_status():
+    """Checks if the 'Show on Unlock' task exists."""
+    query_cmd = ['schtasks', '/Query', '/TN', APP_NAME_UNLOCK]
+    try:
+        subprocess.run(query_cmd, check=True, capture_output=True, text=True, startupinfo=subprocess.STARTUPINFO(dwFlags=subprocess.STARTF_USESHOWWINDOW))
+        print(f"✅ 'Show on Unlock' trigger is currently ENABLED.")
+        return True
+    except subprocess.CalledProcessError:
+        print(f"❌ 'Show on Unlock' trigger is currently DISABLED.")
         return False
 
 def check_dependencies():
@@ -193,55 +266,47 @@ pause
         return False
 
 def main():
-    """Main function"""
-    if not check_dependencies():
-        print("\nPlease resolve dependency issues before proceeding.")
-        return
+    """Main function to provide an interactive management menu."""
+    while True:
+        print("\n" + "=" * 50)
+        print("🤖 AI Work Tracker Management Menu")
+        print("=" * 50)
 
-    if len(sys.argv) > 1:
-        command = sys.argv[1]
-        
-        if command == "--setup":
+        # Check current status of both triggers
+        print("\n--- Current Status ---")
+        check_auto_start_status()
+        check_unlock_trigger_status()
+        print("----------------------\n")
+
+        print("--- Options ---")
+        print("1. Enable 'Start on Login'")
+        print("2. Disable 'Start on Login'")
+        print("3. Enable 'Show on Unlock'")
+        print("4. Disable 'Show on Unlock'")
+        print("5. Check Dependencies")
+        print("6. Exit")
+
+        choice = input("\nEnter your choice (1-6): ").strip()
+
+        if choice == '1':
             setup_auto_start()
-        elif command == "--remove":
+        elif choice == '2':
             remove_auto_start()
-        elif command == "--status":
-            check_auto_start_status()
+        elif choice == '3':
+            setup_unlock_trigger()
+        elif choice == '4':
+            remove_unlock_trigger()
+        elif choice == '5':
+            check_dependencies()
+        elif choice == '6':
+            print("\nGoodbye! 👋")
+            break
         else:
-            print("❌ Unknown command. Use --setup, --remove, or --status")
-    else:
-        # Interactive mode
-        print("🤖 AI Work Tracker Auto-Start Setup")
-        print("=" * 40)
-        print()
+            print("\n❌ Invalid choice. Please enter a number from 1 to 6.")
         
-        # Check current status
-        is_enabled = check_auto_start_status()
-        print()
-        
-        if is_enabled:
-            print("Options:")
-            print("1. Remove auto-start")
-            print("2. Exit")
-            choice = input("\nEnter your choice (1-2): ").strip()
-            
-            if choice == "1":
-                remove_auto_start()
-            else:
-                print("Goodbye!")
-        else:
-            print("Options:")
-            print("1. Setup auto-start")
-            print("2. Create management batch file")
-            print("3. Exit")
-            choice = input("\nEnter your choice (1-3): ").strip()
-            
-            if choice == "1":
-                setup_auto_start()
-            elif choice == "2":
-                create_batch_file()
-            else:
-                print("Goodbye!")
+        input("\nPress Enter to return to the menu...")
+        # Clear screen for better readability (optional, works on Windows/Linux)
+        os.system('cls' if os.name == 'nt' else 'clear')
 
 if __name__ == "__main__":
     main() 

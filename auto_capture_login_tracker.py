@@ -15,9 +15,12 @@ from datetime import datetime, timedelta
 import getpass
 import threading
 import pystray
+import schedule
+import time
 from PIL import Image, ImageDraw
 
 from tracker.log_writer import write_log
+from daily_report import send_daily_report
 
 class AIWorkTracker:
     APP_VERSION = "v1.5"  # A version number to confirm updates
@@ -29,6 +32,11 @@ class AIWorkTracker:
         self.root.resizable(True, True)
         self.root.attributes("-topmost", True)
         
+        self.has_shown_minimize_message = False
+        
+        # Path for the signal file used by the unlock trigger
+        self.signal_file_path = os.path.join("logs", "show_window.signal")
+
         # Set dark theme
         self.root.configure(bg="#23272e")
         
@@ -42,9 +50,28 @@ class AIWorkTracker:
         self.setup_ui()
         self.setup_tray_icon()
         self.start_timer()
+        self.start_scheduler()
 
         # Override the close button to hide the window instead of closing
         self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
+
+    def start_scheduler(self):
+        """
+        Starts a background scheduler in a separate thread for daily tasks.
+        This ensures the UI remains responsive.
+        """
+        def scheduler_loop():
+            # Schedule the daily report to be sent every day at 11 PM (23:00)
+            schedule.every().day.at("23:00").do(send_daily_report)
+            
+            print("🕒 Daily email scheduler started. Report will be sent automatically at 11 PM.")
+            
+            while True:
+                schedule.run_pending()
+                time.sleep(60)  # Check for pending jobs every 60 seconds
+
+        # Run the scheduler in a daemon thread so it exits when the main app closes
+        threading.Thread(target=scheduler_loop, daemon=True).start()
         
     def get_todays_login_time(self):
         """Get today's login time - auto-capture or manual setting"""
@@ -386,13 +413,20 @@ class AIWorkTracker:
         self.update_display_labels()
     
     def reset_for_tomorrow(self):
-        """Reset the login time for tomorrow"""
-        # Delete today's login file
+        """Deletes today's login and report flag files to allow a fresh start."""
         login_file = "logs/auto_captured_login.json"
         if os.path.exists(login_file):
             os.remove(login_file)
+            print("🗑️ Removed today's login file.")
+
+        # Also remove the report sent flag for today
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        flag_file = os.path.join("logs", f"report_sent_{today_str}.flag")
+        if os.path.exists(flag_file):
+            os.remove(flag_file)
+            print("🗑️ Removed today's report-sent flag.")
         
-        messagebox.showinfo("Reset", "Login time reset. Tomorrow it will auto-capture or ask for manual input.")
+        messagebox.showinfo("Reset Complete", "Tracker has been reset. It will perform a fresh auto-capture on the next start.")
 
     def handle_end_day(self):
         """Handles the process for ending the workday, either early or on time."""
@@ -413,6 +447,10 @@ class AIWorkTracker:
                     now.strftime("%Y-%m-%d %H:%M:%S")
                 )
                 self.update_logout_info(now, "Workday Complete")
+                
+                # Send the daily report email immediately upon ending the day
+                print("📧 Triggering daily email report...")
+                threading.Thread(target=send_daily_report, daemon=True).start()
                 self.root.destroy()
 
     def show_early_logout_dialog(self):
@@ -448,6 +486,10 @@ class AIWorkTracker:
 
             # 2. Update the main login file with final details
             self.update_logout_info(now, reason)
+
+            # Send the daily report email
+            print("📧 Triggering daily email report for early logout...")
+            threading.Thread(target=send_daily_report, daemon=True).start()
 
             # 3. Show confirmation and close the app
             messagebox.showinfo("Logout Successful", f"You have been logged out for the day.\nReason: {reason}")
@@ -498,18 +540,34 @@ class AIWorkTracker:
         # Run the icon in a separate thread so it doesn't block the UI
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
 
-    def show_window(self):
-        """Shows the main window."""
-        self.root.deiconify()
+    def show_window(self, icon=None, item=None):
+        """
+        Shows the main window. This is made thread-safe for pystray.
+        It also brings the window to the front.
+        """
+        def _show_and_focus():
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        self.root.after(0, _show_and_focus)
 
     def hide_window(self):
-        """Hides the main window."""
+        """Hides the main window and shows a one-time notification."""
         self.root.withdraw()
+        if not self.has_shown_minimize_message:
+            # Use the tray icon to show a balloon tip notification
+            if self.tray_icon and self.tray_icon.visible:
+                self.tray_icon.notify(
+                    "The tracker is running in the background. Right-click the tray icon to show or quit.",
+                    "AI Work Tracker"
+                )
+            self.has_shown_minimize_message = True
 
-    def quit_app(self):
-        """Stops the tray icon and closes the application."""
+    def quit_app(self, icon=None, item=None):
+        """Stops the tray icon and closes the application. Made thread-safe for pystray."""
         self.tray_icon.stop()
-        self.root.destroy()
+        # Schedule the root window destruction on the main thread
+        self.root.after(0, self.root.destroy)
 
     def get_today_activity_stats(self):
         """Calculates total idle and lock time for today from the structured log."""
@@ -539,6 +597,9 @@ class AIWorkTracker:
     
     def update_display(self):
         """Update the display with current time and progress"""
+        # Periodically check for signals (like the unlock trigger)
+        self.check_for_signals()
+
         now = datetime.now()
         remaining = self.logout_time - now
         total_duration = self.logout_time - self.login_time
@@ -573,6 +634,17 @@ class AIWorkTracker:
         
         self.activity_status_label.config(text=" | ".join(activity_text))
     
+    def check_for_signals(self):
+        """Checks for external signal files to perform actions, like showing the window."""
+        if os.path.exists(self.signal_file_path):
+            try:
+                # A signal file was found, so show the window and remove the file
+                logging.info("💡 Detected unlock signal. Showing window.")
+                self.show_window()
+                os.remove(self.signal_file_path)
+            except Exception as e:
+                logging.warning(f"⚠️ Error processing signal file: {e}")
+
     def run(self):
         """Run the tracker"""
         self.root.mainloop()
