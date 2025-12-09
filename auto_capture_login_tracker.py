@@ -15,8 +15,7 @@ from datetime import datetime, timedelta
 import getpass
 import threading
 import pystray
-import schedule
-import time
+import logging
 from PIL import Image, ImageDraw
 
 from tracker.log_writer import write_log
@@ -28,14 +27,29 @@ class AIWorkTracker:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title(f"🤖 AI Work Tracker {self.APP_VERSION}")
-        self.root.geometry("450x400")
-        self.root.resizable(True, True)
+
+        # Define window size
+        window_width = 400
+        window_height = 250
+
+        # Calculate position for top-right corner
+        screen_width = self.root.winfo_screenwidth()
+        x_position = screen_width - window_width - 10 # 10px margin from edge
+        y_position = 40 # 40px margin from top to avoid overlapping with system icons
+
+        self.root.geometry(f"{window_width}x{window_height}+{x_position}+{y_position}")
+        self.root.resizable(False, False) # Fixed size for a corner widget
         self.root.attributes("-topmost", True)
         
         self.has_shown_minimize_message = False
         
         # Path for the signal file used by the unlock trigger
         self.signal_file_path = os.path.join("logs", "show_window.signal")
+
+        # In-memory stats for idle/lock time to avoid constant file reads
+        self.today_idle_seconds = 0
+        self.today_lock_seconds = 0
+        self.processed_log_entries = 0
 
         # Set dark theme
         self.root.configure(bg="#23272e")
@@ -47,31 +61,10 @@ class AIWorkTracker:
         # Save login time
         self.save_login_time()
         
+        self.load_and_process_activity_log(from_start=True)
         self.setup_ui()
         self.setup_tray_icon()
-        self.start_timer()
-        self.start_scheduler()
-
-        # Override the close button to hide the window instead of closing
-        self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
-
-    def start_scheduler(self):
-        """
-        Starts a background scheduler in a separate thread for daily tasks.
-        This ensures the UI remains responsive.
-        """
-        def scheduler_loop():
-            # Schedule the daily report to be sent every day at 11 PM (23:00)
-            schedule.every().day.at("23:00").do(send_daily_report)
-            
-            print("🕒 Daily email scheduler started. Report will be sent automatically at 11 PM.")
-            
-            while True:
-                schedule.run_pending()
-                time.sleep(60)  # Check for pending jobs every 60 seconds
-
-        # Run the scheduler in a daemon thread so it exits when the main app closes
-        threading.Thread(target=scheduler_loop, daemon=True).start()
+        self.start_periodic_updates()
         
     def get_todays_login_time(self):
         """Get today's login time - auto-capture or manual setting"""
@@ -88,10 +81,10 @@ class AIWorkTracker:
                         login_str = data.get('login_time')
                         if login_str:
                             login_time = datetime.strptime(login_str, "%Y-%m-%d %H:%M:%S")
-                            print(f"📅 Found today's login time: {login_time}")
+                            logging.info(f"📅 Found today's login time: {login_time}")
                             return login_time
             except Exception as e:
-                print(f"⚠️ Error reading login file: {e}")
+                logging.warning(f"⚠️ Error reading login file: {e}", exc_info=True)
         
         # If no login time for today, try auto-capture first, then manual
         auto_time = self.try_auto_capture()
@@ -102,7 +95,7 @@ class AIWorkTracker:
     
     def try_auto_capture(self):
         """Try to auto-capture login time using system methods"""
-        print("🔍 Trying to auto-capture login time...")
+        logging.info("🔍 Trying to auto-capture login time...")
         
         # Method 1: Try to get from system boot time if from today
         try:
@@ -110,10 +103,10 @@ class AIWorkTracker:
             current_time = datetime.now()
             
             if boot_time.date() == current_time.date():
-                print(f"🖥️ Using system boot time: {boot_time}")
+                logging.info(f"🖥️ Using system boot time: {boot_time}")
                 return boot_time
         except Exception as e:
-            print(f"⚠️ Error getting boot time: {e}")
+            logging.warning(f"⚠️ Error getting boot time: {e}")
         
         # Method 2: Check if this is an auto-start scenario (within 5 minutes of boot)
         try:
@@ -122,15 +115,15 @@ class AIWorkTracker:
             time_diff = (current_time - boot_time).total_seconds() / 60  # minutes
             
             if time_diff <= 5:  # Within 5 minutes of boot
-                print(f"🚀 Auto-start detected (booted {time_diff:.1f} minutes ago)")
-                print(f"⏰ Using current time as login: {current_time}")
+                logging.info(f"🚀 Auto-start detected (booted {time_diff:.1f} minutes ago)")
+                logging.info(f"⏰ Using current time as login: {current_time}")
                 return current_time
         except Exception as e:
-            print(f"⚠️ Error checking auto-start scenario: {e}")
+            logging.warning(f"⚠️ Error checking auto-start scenario: {e}")
         
         # Method 3: Use current time as fallback
         current_time = datetime.now()
-        print(f"⏰ Using current time: {current_time}")
+        logging.info(f"⏰ Using current time: {current_time}")
         return current_time
     
     def ask_user_for_time(self):
@@ -207,26 +200,22 @@ class AIWorkTracker:
                 today = datetime.now().date()
                 start_time = datetime.combine(today, datetime.min.time().replace(hour=hour, minute=minute))
                 
-                print(f"✅ User set start time: {start_time}")
+                logging.info(f"✅ User set start time: {start_time}")
                 dialog.destroy()
                 self.login_time = start_time
                 self.logout_time = start_time + timedelta(hours=9)
                 self.save_login_time()
-                
-                # Update display
-                self.update_display_labels()
                 
             except Exception as e:
                 messagebox.showerror("Error", f"Invalid time format. Please use valid numbers.\nError: {e}")
         
         def use_current_time():
             current_time = datetime.now()
-            print(f"✅ Using current time: {current_time}")
+            logging.info(f"✅ Using current time: {current_time}")
             dialog.destroy()
             self.login_time = current_time
             self.logout_time = current_time + timedelta(hours=9)
             self.save_login_time()
-            self.update_display_labels()
         
         # Buttons
         tk.Button(button_frame, text="Set Time", command=set_time, 
@@ -246,12 +235,6 @@ class AIWorkTracker:
             return self.login_time
         return datetime.now()  # Fallback
     
-    def update_display_labels(self):
-        """Update the display labels with new time"""
-        self.login_info_label.config(text=f"🤖 Login Time: {self.login_time.strftime('%I:%M %p')}")
-        self.login_label.config(text=f"🔓 Work Start: {self.login_time.strftime('%I:%M %p')}")
-        self.logout_label.config(text=f"🔒 Work End: {self.logout_time.strftime('%I:%M %p')}")
-    
     def save_login_time(self):
         """Save today's login time"""
         today = datetime.now().strftime("%Y-%m-%d")
@@ -267,12 +250,12 @@ class AIWorkTracker:
         with open("logs/auto_captured_login.json", "w") as f:
             json.dump(login_data, f, indent=2)
         
-        print(f"✅ Login time saved: {self.login_time}")
+        logging.info(f"✅ Login time saved: {self.login_time}")
     
     def get_weather(self):
         """Get weather for the configured city."""
         if not config.OPENWEATHER_API_KEY or "YOUR_API_KEY" in config.OPENWEATHER_API_KEY:
-            print("⚠️ Weather API key not set in config.py. Skipping weather fetch.")
+            logging.warning("⚠️ Weather API key not set in config.py. Skipping weather fetch.")
             return "--°C"
         
         url = f"https://api.openweathermap.org/data/2.5/weather?q={config.WEATHER_CITY}&appid={config.OPENWEATHER_API_KEY}&units=metric"
@@ -285,7 +268,7 @@ class AIWorkTracker:
             if temp is not None:
                 return f"{temp}°C"
         except requests.exceptions.RequestException as e:
-            print(f"⚠️ Error fetching weather: {e}")
+            logging.warning(f"⚠️ Error fetching weather: {e}")
         
         return "--°C"
     
@@ -295,72 +278,34 @@ class AIWorkTracker:
         main_frame = tk.Frame(self.root, bg="#23272e")
         main_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
-        # Title
-        title_label = tk.Label(main_frame, text="🤖 AI Work Tracker", 
-                              font=("Arial", 18, "bold"), 
-                              fg="#4fc3f7", bg="#23272e")
-        title_label.pack(pady=(0, 10))
-        
         # User info with weather
-        weather_temp = self.get_weather()
-        user_label = tk.Label(main_frame, 
-                             text=f"👤 Hello, {getpass.getuser()} 🌤️ {weather_temp}", 
-                             font=("Arial", 14), 
+        # User info with time
+        self.user_info_label = tk.Label(main_frame,
+                             text=f"👤 {getpass.getuser()} | In: {self.login_time.strftime('%I:%M %p')} | Out: {self.logout_time.strftime('%I:%M %p')}",
+                             font=("Arial", 12), 
                              fg="#fff", bg="#23272e")
-        user_label.pack(pady=(0, 15))
-        
-        # Login info
-        login_frame = tk.Frame(main_frame, bg="#2c313c", bd=2, relief="ridge")
-        login_frame.pack(pady=(0, 15), fill="x")
-        
-        self.login_info_label = tk.Label(login_frame, 
-                                        text=f"🤖 Login Time: {self.login_time.strftime('%I:%M %p')}", 
-                                        font=("Arial", 12, "bold"), 
-                                        fg="#ffd700", bg="#2c313c")
-        self.login_info_label.pack(pady=(8, 4), padx=10)
-        
-        # Login/Logout times
-        time_frame = tk.Frame(main_frame, bg="#2c313c", bd=2, relief="ridge")
-        time_frame.pack(pady=(0, 15), fill="x")
-        
-        self.login_label = tk.Label(time_frame, 
-                                   text=f"🔓 Work Start: {self.login_time.strftime('%I:%M %p')}", 
-                                   font=("Arial", 14, "bold"), 
-                                   fg="#4fc3f7", bg="#2c313c")
-        self.login_label.pack(pady=(8, 4), padx=10)
-        
-        self.logout_label = tk.Label(time_frame, 
-                                    text=f"🔒 Work End: {self.logout_time.strftime('%I:%M %p')}", 
-                                    font=("Arial", 14, "bold"), 
-                                    fg="#81c784", bg="#2c313c")
-        self.logout_label.pack(pady=(4, 8), padx=10)
+        self.user_info_label.pack(pady=(0, 15))
         
         # Progress bar
         progress_label = tk.Label(main_frame, text="Workday Progress:", 
                                  font=("Arial", 12, "bold"), 
                                  fg="#fff", bg="#23272e")
-        progress_label.pack(pady=(0, 5))
+        progress_label.pack(pady=(10, 5))
         
         self.progress_var = tk.DoubleVar()
         style = ttk.Style()
         style.theme_use('default')
         style.configure("TProgressbar", troughcolor="#23272e", background="#4fc3f7", 
                        bordercolor="#23272e", lightcolor="#23272e", darkcolor="#23272e")
-        self.progress_bar = ttk.Progressbar(main_frame, variable=self.progress_var, 
-                                           maximum=100, length=350, style="TProgressbar")
+        self.progress_bar = ttk.Progressbar(main_frame, variable=self.progress_var,
+                                           maximum=100, length=340, style="TProgressbar")
         self.progress_bar.pack(pady=(0, 10))
         
         # Countdown
         self.countdown_label = tk.Label(main_frame, text="", 
-                                       font=("Arial", 16, "bold"), 
+                                       font=("Arial", 16, "bold"),
                                        fg="#f92672", bg="#23272e")
         self.countdown_label.pack(pady=(0, 10))
-        
-        # Status
-        self.status_label = tk.Label(main_frame, text="", 
-                                    font=("Arial", 12), 
-                                    fg="#ffd700", bg="#23272e")
-        self.status_label.pack()
 
         # Idle/Lock status
         self.activity_status_label = tk.Label(main_frame, text="",
@@ -372,34 +317,21 @@ class AIWorkTracker:
         button_frame = tk.Frame(main_frame, bg="#23272e")
         button_frame.pack(pady=(10, 0))
         
-        minimize_btn = tk.Button(button_frame, text="Minimize", 
-                                command=self.root.iconify, 
-                                font=("Arial", 12), 
-                                fg="#23272e", bg="#4fc3f7", 
-                                activebackground="#81c784", activeforeground="#23272e")
-        minimize_btn.pack(side=tk.LEFT, padx=5)
-        
-        change_time_btn = tk.Button(button_frame, text="Change Time", 
-                                   command=self.change_time, 
-                                   font=("Arial", 12), 
-                                   fg="#23272e", bg="#ff6b6b", 
-                                   activebackground="#ff8e8e", activeforeground="#23272e")
-        change_time_btn.pack(side=tk.LEFT, padx=5)
-        
-        reset_btn = tk.Button(button_frame, text="Reset for Tomorrow", 
-                             command=self.reset_for_tomorrow, 
-                             font=("Arial", 12), 
-                             fg="#23272e", bg="#ff9800", 
-                             activebackground="#ffb74d", activeforeground="#23272e")
-        reset_btn.pack(side=tk.LEFT, padx=5)
-        
-        end_day_btn = tk.Button(button_frame, text="End Day",
-                                     command=self.handle_end_day,
-                                     font=("Arial", 12),
-                                     fg="#fff", bg="#d32f2f",
-                                     activebackground="#e57373", activeforeground="#fff")
-        end_day_btn.pack(side=tk.LEFT, padx=5)
+        # The primary action button for the corner display
+        end_day_btn = tk.Button(button_frame, text="End Day & Send Report",
+                                command=self.handle_end_day,
+                                font=("Arial", 12, "bold"),
+                                fg="#fff", bg="#d32f2f",
+                                activebackground="#e57373", activeforeground="#fff")
+        end_day_btn.pack(pady=5, ipady=4, ipadx=10) # Center the button with padding
     
+        # Override the close button to hide the window instead of closing
+        self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
+
+    def update_user_info_label(self):
+        """Updates the user info label with the current login/logout times."""
+        self.user_info_label.config(text=f"👤 {getpass.getuser()} | In: {self.login_time.strftime('%I:%M %p')} | Out: {self.logout_time.strftime('%I:%M %p')}")
+
     def change_time(self):
         """Change the start time"""
         # Delete today's login file to force re-ask
@@ -410,21 +342,21 @@ class AIWorkTracker:
         # Get new time
         self.login_time = self.get_todays_login_time()
         self.logout_time = self.login_time + timedelta(hours=9)
-        self.update_display_labels()
+        self.update_user_info_label()
     
     def reset_for_tomorrow(self):
         """Deletes today's login and report flag files to allow a fresh start."""
         login_file = "logs/auto_captured_login.json"
         if os.path.exists(login_file):
             os.remove(login_file)
-            print("🗑️ Removed today's login file.")
+            logging.info("🗑️ Removed today's login file.")
 
         # Also remove the report sent flag for today
         today_str = datetime.now().strftime("%Y-%m-%d")
         flag_file = os.path.join("logs", f"report_sent_{today_str}.flag")
         if os.path.exists(flag_file):
             os.remove(flag_file)
-            print("🗑️ Removed today's report-sent flag.")
+            logging.info("🗑️ Removed today's report-sent flag.")
         
         messagebox.showinfo("Reset Complete", "Tracker has been reset. It will perform a fresh auto-capture on the next start.")
 
@@ -449,7 +381,7 @@ class AIWorkTracker:
                 self.update_logout_info(now, "Workday Complete")
                 
                 # Send the daily report email immediately upon ending the day
-                print("📧 Triggering daily email report...")
+                logging.info("📧 Triggering daily email report...")
                 threading.Thread(target=send_daily_report, daemon=True).start()
                 self.root.destroy()
 
@@ -488,7 +420,7 @@ class AIWorkTracker:
             self.update_logout_info(now, reason)
 
             # Send the daily report email
-            print("📧 Triggering daily email report for early logout...")
+            logging.info("📧 Triggering daily email report for early logout...")
             threading.Thread(target=send_daily_report, daemon=True).start()
 
             # 3. Show confirmation and close the app
@@ -517,7 +449,11 @@ class AIWorkTracker:
         login_data['logout_reason'] = reason
         with open(login_file, "w") as f:
             json.dump(login_data, f, indent=2)
-        print(f"✅ Final logout info saved at {logout_time} for reason: {reason}")
+        logging.info(f"✅ Final logout info saved at {logout_time} for reason: {reason}")
+
+    def change_time_thread_safe(self, icon=None, item=None):
+        """Wrapper to call change_time from the pystray thread safely."""
+        self.root.after(0, self.change_time)
 
     def setup_tray_icon(self):
         """Sets up and runs the system tray icon in a separate thread."""
@@ -532,6 +468,7 @@ class AIWorkTracker:
         
         menu = (
             pystray.MenuItem('Show Tracker', self.show_window, default=True),
+            pystray.MenuItem('Change Start Time', self.change_time_thread_safe),
             pystray.MenuItem('Quit', self.quit_app)
         )
         
@@ -569,32 +506,49 @@ class AIWorkTracker:
         # Schedule the root window destruction on the main thread
         self.root.after(0, self.root.destroy)
 
-    def get_today_activity_stats(self):
-        """Calculates total idle and lock time for today from the structured log."""
+    def load_and_process_activity_log(self, from_start=False):
+        """
+        Reads the structured log file and updates activity stats.
+        If from_start is True, it processes the whole file from the beginning.
+        Otherwise, it only processes new entries since the last check.
+        This is far more efficient than re-reading the entire file every time.
+        """
         log_file = "logs/structured_log.json"
         today_str = datetime.now().strftime('%Y-%m-%d')
-        idle_seconds = 0
-        lock_seconds = 0
 
-        if os.path.exists(log_file):
-            try:
-                with open(log_file, 'r') as f:
-                    logs = json.load(f)
-                    for entry in logs:
-                        if entry.get('start_time', '').startswith(today_str):
-                            if entry.get('event') == 'idle':
-                                idle_seconds += entry.get('duration_seconds', 0)
-                            elif entry.get('event') == 'lock':
-                                lock_seconds += entry.get('duration_seconds', 0)
-            except (json.JSONDecodeError, IOError):
-                pass  # Ignore errors if the file is being written to
-        return idle_seconds, lock_seconds
-    
-    def start_timer(self):
-        """Start the update timer"""
+        if not os.path.exists(log_file):
+            return
+
+        try:
+            with open(log_file, 'r') as f:
+                logs = json.load(f)
+            
+            start_index = 0 if from_start else self.processed_log_entries
+
+            new_entries = logs[start_index:]
+            if not new_entries:
+                return  # Nothing new to process
+
+            for entry in new_entries:
+                if entry.get('start_time', '').startswith(today_str):
+                    if entry.get('event') == 'idle':
+                        self.today_idle_seconds += entry.get('duration_seconds', 0)
+                    elif entry.get('event') == 'lock':
+                        self.today_lock_seconds += entry.get('duration_seconds', 0)
+            
+            self.processed_log_entries = len(logs)
+            logging.info(f"Processed {len(new_entries)} new log entries. Totals: Idle={self.today_idle_seconds}s, Lock={self.today_lock_seconds}s")
+
+        except (json.JSONDecodeError, IOError, IndexError) as e:
+            logging.warning(f"Could not process activity log: {e}")
+
+    def start_periodic_updates(self):
+        """Starts the timers for updating the UI and checking for new logs."""
         self.update_display()
-        self.root.after(1000, self.start_timer)
-    
+        self.load_and_process_activity_log(from_start=False)
+        self.root.after(1000, self.start_periodic_updates) # UI updates every second
+
+
     def update_display(self):
         """Update the display with current time and progress"""
         # Periodically check for signals (like the unlock trigger)
@@ -617,15 +571,9 @@ class AIWorkTracker:
         else:
             self.countdown_label.config(text="✅ 9 Hours Completed!")
         
-        # Update status
-        if remaining.total_seconds() > 0:
-            hours_worked = elapsed.total_seconds() / 3600
-            self.status_label.config(text=f"Status: Working ({hours_worked:.1f} hours completed)")
-        else:
-            self.status_label.config(text="Status: Workday Complete!")
-
         # Update idle/lock status
-        idle_seconds, lock_seconds = self.get_today_activity_stats()
+        idle_seconds = self.today_idle_seconds
+        lock_seconds = self.today_lock_seconds
         activity_text = []
         if idle_seconds > 60:
             activity_text.append(f"Idle: {idle_seconds // 60} min")
@@ -649,15 +597,10 @@ class AIWorkTracker:
         """Run the tracker"""
         self.root.mainloop()
 
-def main():
-    print("🚀 Starting AI Work Tracker...")
-    print("🤖 Auto-captures login time with manual fallback")
-    print("⏰ Login time = Auto-detected or manually set")
-    print("⏰ Logout time = 9 hours from login time")
-    print("💡 Best of both worlds - automatic when possible, manual when needed!")
-    
-    tracker = AIWorkTracker()
-    tracker.run()
-
 if __name__ == "__main__":
-    main() 
+    # This script is not meant to be run directly.
+    # The main entry point for the application is 'main.py',
+    # which handles logging setup and single-instance checking.
+    print("This script is part of the AI Work Tracker application.")
+    print("Please run 'main.py' to start the tracker.")
+    

@@ -9,10 +9,14 @@ import sys
 import winreg
 import subprocess
 import importlib
+import getpass
+import tempfile
+import ctypes
 from pathlib import Path
 
 APP_NAME_LOGIN = "AIWorkTracker"
 APP_NAME_UNLOCK = "AIWorkTrackerShowOnUnlock"
+APP_NAME_REPORT = "AIWorkTrackerDailyReport"
 
 def setup_auto_start():
     """Set up auto-start for the AI Work Tracker"""
@@ -20,20 +24,20 @@ def setup_auto_start():
     print("=" * 50)
     
     # Get the current directory and script path
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    main_script = os.path.join(current_dir, "main.py")
+    current_dir = Path(__file__).parent.resolve()
+    main_script = current_dir / "main.py"
     
     # Check if the tracker script exists
-    if not os.path.exists(main_script):
-        print(f"❌ Error: {os.path.basename(main_script)} not found!")
+    if not main_script.exists():
+        print(f"❌ Error: '{main_script.name}' not found in {current_dir}")
         return False
     
     # Get Python executable path
-    python_exe = sys.executable
-    pythonw_exe = python_exe.replace("python.exe", "pythonw.exe")
+    python_exe = Path(sys.executable)
+    pythonw_exe = python_exe.with_name("pythonw.exe")
 
     # Prefer pythonw.exe for a silent, no-console startup, but fall back if it doesn't exist
-    if not os.path.exists(pythonw_exe):
+    if not pythonw_exe.exists():
         print("⚠️ 'pythonw.exe' not found, falling back to 'python.exe'. A console window may flash on startup.")
         startup_executable = python_exe
     else:
@@ -53,7 +57,7 @@ def setup_auto_start():
         
         print("✅ Auto-start setup successful!")
         print(f"📁 Main script: {main_script}")
-        print(f"🐍 Python executable: {python_exe}")
+        print(f"🐍 Python executable: {startup_executable}")
         print(f"🔧 Startup command: {startup_cmd}")
         print("\n🎯 What happens now:")
         print("   • The tracker will start automatically when you log into Windows")
@@ -121,27 +125,71 @@ def check_auto_start_status():
 def setup_unlock_trigger():
     """Sets up a task to show the tracker window on workstation unlock."""
     print("\n🔧 Setting up 'Show on Unlock' trigger via Task Scheduler...")
-    
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    main_script = os.path.join(current_dir, "main.py")
-    
-    pythonw_exe = sys.executable.replace("python.exe", "pythonw.exe")
-    if not os.path.exists(pythonw_exe):
-        pythonw_exe = sys.executable
 
-    # The command includes a flag to tell the app it's an unlock trigger
-    command = f'"{pythonw_exe}" "{main_script}" --show-on-unlock'
-    
-    # schtasks command to create the task
-    create_cmd = [
-        'schtasks', '/Create', '/TN', APP_NAME_UNLOCK, '/TR', command, '/SC', 'ONUNLOCK', '/F'
-    ]
-    
+    current_dir = Path(__file__).parent.resolve()
+    main_script = current_dir / "main.py"
+
+    pythonw_exe = Path(sys.executable).with_name("pythonw.exe")
+    if not pythonw_exe.exists():
+        pythonw_exe = Path(sys.executable)
+
+    # Define the task using an XML template. This is the robust way to create
+    # an event-based trigger for 'On workstation unlock' (SessionUnlock),
+    # which is not possible with simple schtasks flags like /SC.
+    task_xml = f"""<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Shows the AI Work Tracker when the user unlocks the workstation.</Description>
+    <Author>{getpass.getuser()}</Author>
+  </RegistrationInfo>
+  <Triggers>
+    <SessionStateChangeTrigger>
+      <Enabled>true</Enabled>
+      <StateChange>SessionUnlock</StateChange>
+    </SessionStateChangeTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>{getpass.getuser()}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>true</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>"{pythonw_exe}"</Command>
+      <Arguments>"{main_script}" --show-on-unlock</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"""
+    # Use a temporary file to pass the XML to schtasks
+    xml_file_path = Path(tempfile.gettempdir()) / f"{APP_NAME_UNLOCK}.xml"
     try:
+        # Write the XML content with UTF-16 encoding, as required by schtasks
+        xml_file_path.write_text(task_xml, encoding='utf-16')
+
+        # schtasks command to create the task from the XML definition
+        create_cmd = ['schtasks', '/Create', '/TN', APP_NAME_UNLOCK, '/XML', str(xml_file_path), '/F']
+
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        
-        result = subprocess.run(create_cmd, check=True, capture_output=True, text=True, startupinfo=startupinfo)
+        subprocess.run(create_cmd, check=True, capture_output=True, text=True, startupinfo=startupinfo)
         print(f"✅ Success: Task '{APP_NAME_UNLOCK}' created.")
         print("   The tracker window will now appear each time you unlock your computer.")
         return True
@@ -149,8 +197,15 @@ def setup_unlock_trigger():
         print("❌ Error: 'schtasks.exe' not found. This feature is only available on Windows.")
         return False
     except subprocess.CalledProcessError as e:
-        print(f"❌ Error creating scheduled task: {e.stderr}")
+        # Provide a more helpful error message if the XML is malformed
+        if "ERROR: The task XML is malformed" in e.stderr:
+            print(f"❌ Error creating scheduled task: The generated task XML is invalid.\n   Details: {e.stderr}")
+        else:
+            print(f"❌ Error creating scheduled task: {e.stderr}")
         return False
+    finally:
+        if xml_file_path.exists():
+            xml_file_path.unlink()
 
 def remove_unlock_trigger():
     """Removes the 'Show on Unlock' scheduled task."""
@@ -162,7 +217,7 @@ def remove_unlock_trigger():
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         
-        result = subprocess.run(delete_cmd, check=True, capture_output=True, text=True, startupinfo=startupinfo)
+        subprocess.run(delete_cmd, check=True, capture_output=True, text=True, startupinfo=startupinfo)
         print(f"✅ Success: Task '{APP_NAME_UNLOCK}' removed.")
         return True
     except FileNotFoundError:
@@ -186,6 +241,80 @@ def check_unlock_trigger_status():
         return True
     except subprocess.CalledProcessError:
         print(f"❌ 'Show on Unlock' trigger is currently DISABLED.")
+        return False
+
+def setup_daily_report_task():
+    """Sets up a daily task to send the report at 11 PM."""
+    print("\n🔧 Setting up 'Daily Report at 11 PM' task via Task Scheduler...")
+
+    current_dir = Path(__file__).parent.resolve()
+    report_script = current_dir / "run_report.py"
+
+    if not report_script.exists():
+        print(f"❌ Error: Report script '{report_script.name}' not found in {current_dir}")
+        print("   Please ensure 'run_report.py' exists.")
+        return False
+
+    pythonw_exe = Path(sys.executable).with_name("pythonw.exe")
+    if not pythonw_exe.exists():
+        pythonw_exe = Path(sys.executable)
+
+    command = f'"{pythonw_exe}" "{report_script}"'
+
+    # schtasks command to create the task
+    create_cmd = [
+        'schtasks', '/Create', '/TN', APP_NAME_REPORT, '/TR', command,
+        '/SC', 'DAILY', '/ST', '23:00', '/F'
+    ]
+
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+        subprocess.run(create_cmd, check=True, capture_output=True, text=True, startupinfo=startupinfo)
+        print(f"✅ Success: Task '{APP_NAME_REPORT}' created.")
+        print("   The daily report will now be sent automatically at 11 PM each day.")
+        return True
+    except FileNotFoundError:
+        print("❌ Error: 'schtasks.exe' not found. This feature is only available on Windows.")
+        return False
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Error creating scheduled task: {e.stderr}")
+        return False
+
+def remove_daily_report_task():
+    """Removes the 'Daily Report' scheduled task."""
+    print("\n🗑️ Removing 'Daily Report' task...")
+
+    delete_cmd = ['schtasks', '/Delete', '/TN', APP_NAME_REPORT, '/F']
+
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+        subprocess.run(delete_cmd, check=True, capture_output=True, text=True, startupinfo=startupinfo)
+        print(f"✅ Success: Task '{APP_NAME_REPORT}' removed.")
+        return True
+    except FileNotFoundError:
+        print("❌ Error: 'schtasks.exe' not found.")
+        return False
+    except subprocess.CalledProcessError as e:
+        if "ERROR: The specified task name" in e.stderr:
+            print(f"ℹ️  Info: Task '{APP_NAME_REPORT}' was not found (already removed).")
+            return True
+        else:
+            print(f"❌ Error removing scheduled task: {e.stderr}")
+            return False
+
+def check_daily_report_status():
+    """Checks if the 'Daily Report' task exists."""
+    query_cmd = ['schtasks', '/Query', '/TN', APP_NAME_REPORT]
+    try:
+        subprocess.run(query_cmd, check=True, capture_output=True, text=True, startupinfo=subprocess.STARTUPINFO(dwFlags=subprocess.STARTF_USESHOWWINDOW))
+        print(f"✅ 'Daily Report' task is currently ENABLED (runs at 11 PM).")
+        return True
+    except subprocess.CalledProcessError:
+        print(f"❌ 'Daily Report' task is currently DISABLED.")
         return False
 
 def check_dependencies():
@@ -215,58 +344,31 @@ def check_dependencies():
     print("👍 All dependencies are present.")
     return True
 
-def create_batch_file():
-    """Create a batch file for easier management"""
-    print("📝 Creating batch file for easy management...")
-    
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    batch_file = os.path.join(current_dir, "manage_tracker.bat")
-    
-    batch_content = f"""@echo off
-echo AI Work Tracker Management
-echo =========================
-echo.
-echo 1. Start Tracker Now
-echo 2. Setup Auto-Start
-echo 3. Remove Auto-Start
-echo 4. Check Auto-Start Status
-echo 5. Exit
-echo.
-set /p choice="Enter your choice (1-5): "
-
-if "%choice%"=="1" (
-    echo Starting tracker...
-    python "{os.path.join(current_dir, "main.py")}"
-) else if "%choice%"=="2" (
-    echo Setting up auto-start...
-    python "{os.path.join(current_dir, "setup_auto_start.py")}" --setup
-) else if "%choice%"=="3" (
-    echo Removing auto-start...
-    python "{os.path.join(current_dir, "setup_auto_start.py")}" --remove
-) else if "%choice%"=="4" (
-    echo Checking auto-start status...
-    python "{os.path.join(current_dir, "setup_auto_start.py")}" --status
-) else if "%choice%"=="5" (
-    echo Goodbye!
-    exit
-) else (
-    echo Invalid choice!
-)
-echo.
-pause
-"""
-    
+def is_admin():
+    """Checks if the script is running with administrative privileges on Windows."""
     try:
-        with open(batch_file, 'w') as f:
-            f.write(batch_content)
-        print(f"✅ Batch file created: {batch_file}")
-        return True
-    except Exception as e:
-        print(f"❌ Error creating batch file: {e}")
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
         return False
 
 def main():
     """Main function to provide an interactive management menu."""
+    # On Windows, scheduled tasks and registry edits require admin rights.
+    if os.name == 'nt' and not is_admin():
+        print("\n" + "=" * 60)
+        print("❌ ERROR: Administrative privileges are required.")
+        print("   This script needs to modify system settings (Registry and Task Scheduler).")
+        print("\n   How to fix:")
+        print("   1. Close this window.")
+        print("   2. Right-click on your terminal (e.g., Command Prompt, PowerShell).")
+        print("   3. Select 'Run as administrator'.")
+        print("   4. Navigate back to this directory and run the script again:")
+        print(f"      cd {Path.cwd()}")
+        print(f"      python {Path(__file__).name}")
+        print("=" * 60)
+        input("\nPress Enter to exit...")
+        sys.exit(1)
+
     while True:
         print("\n" + "=" * 50)
         print("🤖 AI Work Tracker Management Menu")
@@ -276,17 +378,22 @@ def main():
         print("\n--- Current Status ---")
         check_auto_start_status()
         check_unlock_trigger_status()
+        check_daily_report_status()
         print("----------------------\n")
 
-        print("--- Options ---")
+        print("--- Login/Unlock Options ---")
         print("1. Enable 'Start on Login'")
         print("2. Disable 'Start on Login'")
         print("3. Enable 'Show on Unlock'")
         print("4. Disable 'Show on Unlock'")
-        print("5. Check Dependencies")
-        print("6. Exit")
+        print("\n--- Report Options ---")
+        print("5. Enable 'Daily Report at 11 PM'")
+        print("6. Disable 'Daily Report at 11 PM'")
+        print("\n--- Maintenance ---")
+        print("7. Check Dependencies")
+        print("8. Exit")
 
-        choice = input("\nEnter your choice (1-6): ").strip()
+        choice = input("\nEnter your choice (1-8): ").strip()
 
         if choice == '1':
             setup_auto_start()
@@ -297,12 +404,16 @@ def main():
         elif choice == '4':
             remove_unlock_trigger()
         elif choice == '5':
-            check_dependencies()
+            setup_daily_report_task()
         elif choice == '6':
+            remove_daily_report_task()
+        elif choice == '7':
+            check_dependencies()
+        elif choice == '8':
             print("\nGoodbye! 👋")
             break
         else:
-            print("\n❌ Invalid choice. Please enter a number from 1 to 6.")
+            print(f"\n❌ Invalid choice. Please enter a number from 1 to 8.")
         
         input("\nPress Enter to return to the menu...")
         # Clear screen for better readability (optional, works on Windows/Linux)

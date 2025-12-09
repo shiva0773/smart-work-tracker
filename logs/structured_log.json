@@ -579,5 +579,12 @@
     "start_time": "2025-07-31 12:14:49",
     "end_time": "2025-07-31 12:16:02",
     "duration_seconds": 73
+  },
+  {
+    "event": "early_logout",
+    "title": "Feeling unwell",
+    "start_time": "2025-07-31 14:49:55",
+    "end_time": "2025-07-31 14:50:11",
+    "duration_seconds": 16
   }
 ]

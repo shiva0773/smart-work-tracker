@@ -1,25 +1,25 @@
 import sys
-import os
 import logging
+from pathlib import Path
 from auto_capture_login_tracker import AIWorkTracker
 from tracker.singleton import SingleInstance
 
 # --- Constants ---
 APP_NAME = "AIWorkTracker"
-LOGS_DIR = "logs"
-LOG_FILE = os.path.join(LOGS_DIR, "app.log")
+LOGS_DIR = Path("logs")
+LOG_FILE = LOGS_DIR / "app.log"
 
 def setup_logging():
     """Configures centralized logging for the application."""
     # Ensure the logs directory exists
-    os.makedirs(LOGS_DIR, exist_ok=True)
+    LOGS_DIR.mkdir(exist_ok=True)
     
     # Configure logging to write to a file and the console
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
         handlers=[
-            logging.FileHandler(LOG_FILE),
+            logging.FileHandler(LOG_FILE, encoding='utf-8'),
             logging.StreamHandler(sys.stdout) # To see logs in console during development
         ]
     )
@@ -32,9 +32,8 @@ def handle_single_instance(is_unlock_trigger=False):
         if is_unlock_trigger:
             # This is a launch from the unlock task. Signal the main app to show its window.
             logging.info("Unlock trigger: Instance already running. Signaling it to show window.")
-            signal_file = os.path.join(LOGS_DIR, "show_window.signal")
-            with open(signal_file, "w") as f:
-                f.write("show")
+            signal_file = LOGS_DIR / "show_window.signal"
+            signal_file.write_text("show")
             sys.exit(0) # Exit silently
         else:
             # This is a manual launch. Inform the user that it's already running.
